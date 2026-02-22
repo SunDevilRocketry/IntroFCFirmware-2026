@@ -1,6 +1,6 @@
 ## Command Module (`command.c`/`command.h`)
 
-The Command module provides a protocol layer for terminal firmware, implementing a consistent one-way handshake for all commands. It builds on top of the USB driver to provide structured communication w/ the client.
+The Command module provides a protocol layer for terminal firmware, implementing a one-way handshake for all commands. It builds on top of the USB driver to provide structured communication w/ the client.
 
 ### Features
 - **Simple Protocol**: Implements a consistent command → ACK → execution → response
@@ -74,19 +74,6 @@ Main entry point for all commands. Usually best called from a superloop when a c
 2. Validates command exists in table
 3. Executes the appropriate handler
 4. Sends result (echo command or 0x0F) back to client
-
-### Command Handlers
-
-Each command implements a handler function that returns `cmd_result_t`:
-
-```c
-cmd_result_t cmd_ping(void);
-cmd_result_t cmd_connect(void);
-```
-
-**Return Values:**
-- `CMD_RESULT_SUCCESS` - Command executed successfully
-- `CMD_RESULT_FAILED` - Command execution failed
 
 ### Adding New Commands
 
