@@ -9,6 +9,12 @@ typedef enum {
     BARO_FAIL
 } BARO_STATUS;
 
+// Memory addresses
+#define REG_CHIP_ID 0x00;
+
+// Default values for addresses
+#define CHIP_ID_DEFAULT 0x60;
+
 // Function Prototypes
 BARO_STATUS baro_reg_write (uint16_t memAddress, uint8_t *pData, uint8_t size);
-BARO_STATUS baro_red_read (uint16_t memAddress, uint8_t *pData, uint8_t size);
+BARO_STATUS baro_reg_read (uint16_t memAddress, uint8_t *pData, uint8_t size);
