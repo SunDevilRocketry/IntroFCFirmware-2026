@@ -1,10 +1,4 @@
-#include <stdio.h>
-#include <string.h>
-#include <BMP390.h>
-#include <stdint.h>
-#include "main.h"
-#include "stm32h7xx_hal_i2c.h"
-
+#include "BMP390.h"
 
 
 BARO_STATUS baro_reg_write (uint16_t memAddress, uint8_t *pData, uint8_t size){
@@ -47,4 +41,39 @@ BARO_STATUS validate_dev_id ()
     else {
         return BARO_FAIL;
     }
+}
+
+BARO_STATUS baro_read_data (BARO_DATA* baro_data_out_ptr)
+{
+    uint32_t pressure = 0;
+    uint8_t buffer = 0;
+
+    BARO_STATUS status = BARO_OK;
+
+    status = baro_read_reg(REG_PRESS_23_16, &buffer, 8);
+    if (status != BARO_OK)
+    {
+        return status;
+    }
+    pressure += buffer;
+    pressure = pressure << 8;
+
+    status = baro_read_reg(REG_PRESS_15_8, &buffer, 8);
+    if (status != BARO_OK)
+    {
+        return status;
+    }
+    pressure += buffer;
+    pressure = pressure << 8;
+
+    status = baro_read_reg(REG_PRESS_7_0, &buffer, 8);
+    if (status != BARO_OK)
+    {
+        return status;
+    }
+    pressure += buffer;
+
+    baro_data_out_ptr->pressure = pressure;
+
+    return BARO_OK;
 }
