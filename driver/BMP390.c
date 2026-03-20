@@ -1,10 +1,4 @@
-#include <stdio.h>
-#include <string.h>
-#include <BMP390.h>
-#include <stdint.h>
-#include "main.h"
-#include "stm32h7xx_hal_i2c.h"
-
+#include "BMP390.h"
 
 
 BARO_STATUS baro_reg_write (uint16_t memAddress, uint8_t *pData, uint8_t size){
