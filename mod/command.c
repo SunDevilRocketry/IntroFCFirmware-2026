@@ -1,13 +1,11 @@
 #include "command.h"
 #include <string.h>
 
-// Private variables begin //
-
+/* Private variables */
 static uint32_t g_timeout_ms = 1000;    // Default timeout for USB operations
 
-// Private variables end //
 
-// Command table definition begin //
+/* Command table definition */
 
 /**
  * @brief Command dispatch table
@@ -25,9 +23,8 @@ static const struct {
     {0, NULL}                   
 };
 
-// Command table definition end //
 
-// Private function prototypes begin //
+/* Private function prototypes */
 
 /**
  * @brief Find command index in dispatch table
@@ -36,9 +33,8 @@ static const struct {
  */
 static int find_command_index(uint8_t cmd_byte);
 
-// Private function prototypes end //
 
-// Public Functions begin //
+/* Public Functions */
 
 void command_init(uint32_t timeout_ms)
 {
@@ -72,9 +68,8 @@ void command_process(uint8_t cmd_byte)
     }
 }
 
-// Public Functions end //
 
-// Command Handlers begin //
+/* Command Handlers */
 
 cmd_result_t cmd_ping(void)
 {
@@ -85,20 +80,11 @@ cmd_result_t cmd_ping(void)
 
 cmd_result_t cmd_connect(void)
 {
-    // Send firmware version string (null-terminated)
-    if (usb_transmit((uint8_t*)FIRMWARE_VERSION, 
-                     sizeof(FIRMWARE_VERSION), g_timeout_ms) != USB_OK) {
-        // Transmission failed - report error
-        return CMD_RESULT_FAILED;
-    }
-    
-    // Version sent successfully
     return CMD_RESULT_SUCCESS;
 }
 
-// Command Handlers end //
 
-// Private Functions begin //
+/* Private Functions */
 
 static int find_command_index(uint8_t cmd_byte)
 {
@@ -111,4 +97,3 @@ static int find_command_index(uint8_t cmd_byte)
     return -1;  // Command not found in table
 }
 
-// Private Functions end //

@@ -5,17 +5,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Firmware version //
 
-#define FIRMWARE_VERSION "2026-02-21"  /**< Firmware version string in YYYY-MM-DD format */
-
-// Command byte definitions begin //
+/* Command byte definitions (Opcodes) */
 
 #define CMD_PING        0x01    
 #define CMD_CONNECT     0x27 
 // [Add more if desired]   
 
-// Command byte definitions end //
 
 // Protocol byte definitions begin //
 
@@ -27,17 +23,14 @@
 // Protocol byte definitions end //
 
 
-// Command result enum //
-
 /**
  * @brief Result codes returned by command handlers
  */
 typedef enum {
-    CMD_RESULT_SUCCESS,  // Command executed successfully 
-    CMD_RESULT_FAILED    // Command execution failed
+    CMD_RESULT_SUCCESS, 
+    CMD_RESULT_FAILED   
 } cmd_result_t;
 
-// Command handler prototype //
 
 /**
  * @brief Function pointer type for all command handlers
@@ -45,7 +38,7 @@ typedef enum {
  */
 typedef cmd_result_t (*cmd_handler_t)(void);
 
-// Public Functions begin //
+/* Public Functions */
 
 /**
  * @brief Initialize the command module
@@ -67,7 +60,6 @@ void command_init(uint32_t timeout_ms);
  */
 void command_process(uint8_t cmd_byte);
 
-// Public Functions end //
 
 // Command Handlers begin //
 
@@ -85,11 +77,12 @@ cmd_result_t cmd_ping(void);
 /**
  * @brief Connect command handler
  * 
- * Performs connection handshake by sending firmware version
- * string to client. The version string is null-terminated.
- * Completion byte (0x27) will be sent by command_process().
+ * Performs connection handshake. Instead of sending a heavy version 
+ * string, it simply returns success. The command_process() function 
+ * will react by echoing the unique firmware opcode (0x27) back to 
+ * the client to verify firmware identity.
  * 
- * @return CMD_RESULT_SUCCESS if version sent, CMD_RESULT_FAILED otherwise
+ * @return CMD_RESULT_SUCCESS always
  */
 cmd_result_t cmd_connect(void);
 

@@ -45,7 +45,7 @@ static const struct {
     cmd_result_t (*handler)(void);  // Function to execute
 } command_table[] = {
     {CMD_PING,    cmd_ping},        // Ping command
-    {CMD_CONNECT, cmd_connect},     // Connect command
+    {CMD_CONNECT, cmd_connect},     // Connect command - reacts with opcode 0x27
     {0, NULL}                       // (DO NOT REMOVE)
 };
 ```
@@ -55,7 +55,7 @@ static const struct {
 | Command | Byte | Description |
 |---------|------|-------------|
 | `CMD_PING` | 0x01 | Tests communication; always succeeds |
-| `CMD_CONNECT` | 0x02 | Establishes connection, sends firmware version |
+| `CMD_CONNECT` | 0x27 | Verifies firmware identity via opcode reaction |
 
 ### API Reference
 
@@ -111,7 +111,7 @@ static const struct {
 };
 ```
 
-That's all. Properly done commands will automatically follow the protocal.
+That's all. Properly done commands will automatically follow the protocol.
 
 ### Example integration with `main.c`
 
@@ -156,14 +156,14 @@ int main(void)
 }
 ```
 
-### Command Handlers Detail [fulfilling requirements]
+### Command Handlers Detail
 
 **Ping Handler:**
 ```c
 cmd_result_t cmd_ping(void)
 {
     // Ping requires no additional actions
-    // Success is implicit - completion byte will be sent by command_process()
+    // Success is implicit - completion byte (0x01) will be sent by command_process()
     return CMD_RESULT_SUCCESS;
 }
 ```
@@ -172,12 +172,8 @@ cmd_result_t cmd_ping(void)
 ```c
 cmd_result_t cmd_connect(void)
 {
-    // Send firmware version string (null-terminated)
-    if (usb_transmit((uint8_t*)FIRMWARE_VERSION, 
-                     sizeof(FIRMWARE_VERSION), g_timeout_ms) != USB_OK) {
-        return CMD_RESULT_FAILED;
-    }
-    
+    // Connect requires no additional actions
+    // Success is implicit - completion byte (0x27) will be sent by command_process()
     return CMD_RESULT_SUCCESS;
 }
 ```
@@ -205,10 +201,10 @@ STM32:  0x01 (success - echoes command)
 
 **Successful Connect:**
 ```
-Client: 0x02
+Client: 0x27
 STM32:  0x0A (ACK_READY)
-STM32:  "2026-02-21" (firmware version)
-STM32:  0x02 (success - echoes command)
+STM32:  (executes cmd_connect)
+STM32:  0x27 (success - echoes command)
 ```
 
 **Unknown Command:**
@@ -218,5 +214,3 @@ STM32:  0x0A (ACK_READY)
 STM32:  (command not found in table)
 STM32:  0x0F (ACK_ERROR)
 ```
-
-
