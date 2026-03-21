@@ -18,7 +18,7 @@ The SPI Flash driver (`spi_flash.c`/`spi_flash.h`) provides a logic abstraction 
 **Hardware Connections**:
 Ensure the `/WP` (Write Protect) and `/HOLD` pins (if applicable) on the flash chip are tied to 3.3V (Logic High) to prevent the chip from ignoring commands or entering a pause state.
 
-*This driver is designed for the STM32H7 series but uses standard HAL functions compatible with all STM32 families.*
+*This driver is designed using the STM32H7 series but uses standard HAL functions compatible with all STM32 families.*
 
 ### Driver Initialization
 Initialize the driver by associating it with your SPI bus and the chosen Chip Select pin:
