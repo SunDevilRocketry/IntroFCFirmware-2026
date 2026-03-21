@@ -5,7 +5,7 @@ This directory contains low-level hardware abstraction drivers. These drivers ar
 ## Available Drivers
 
 | Driver | Description | Documentation |
-| :--- | :--- | :--- | :--- |
+| :--- | :--- | :--- |
 | **USB Driver** | UART-based USB communication (Blocking & Interrupt) |  [View Docs](./READMEusb.md) |
 | **SPI Flash** | Winbond W25Q128JV Logic & Data Management |  [View Docs](./READMEspi.md) |
 
