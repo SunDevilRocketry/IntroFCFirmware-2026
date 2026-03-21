@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-
 typedef enum {
     SPI_FLASH_OK = 0,      /* Operation completed successfully                      */
     SPI_FLASH_ERROR,       /* Operation failed (HAL error, invalid params, etc.)    */
@@ -38,7 +37,6 @@ typedef struct {
  * @param hspi      Pointer to initialized SPI handle (from CubeMX)
  * @param cs_port   GPIO port for CS pin (e.g., GPIOA, GPIOB)
  * @param cs_pin    GPIO pin for CS pin (e.g., GPIO_PIN_4)
- * 
  */
 void spi_flash_init(SPI_Flash_Handle* flash, 
                     SPI_HandleTypeDef* hspi, 
@@ -68,6 +66,7 @@ SPI_FLASH_STAT read_device_id(SPI_Flash_Handle* flash,
                                uint8_t* manufacturer, 
                                uint8_t* memory_type, 
                                uint8_t* capacity);
+
 /* ============================================================================
    Data Block Management (Erase/Write/Read)
    ============================================================================ */
@@ -93,8 +92,8 @@ SPI_FLASH_STAT spi_flash_erase_sector(SPI_Flash_Handle* flash, uint32_t address)
 
 /**
  * @brief Write up to 256 bytes to a single page.
- * @note If 'size' + 'address' crosses a page boundary (256 bytes), the 
- *       data will wrap around to the beginning of the same page.
+ * @note Prevents crossing page boundaries. Will return SPI_FLASH_ERROR 
+ *       if address + size exceeds the 256-byte page limit.
  */
 SPI_FLASH_STAT spi_flash_write_page(SPI_Flash_Handle* flash, uint32_t address, 
                                     uint8_t* data, uint16_t size);
@@ -107,5 +106,3 @@ SPI_FLASH_STAT spi_flash_read_data(SPI_Flash_Handle* flash, uint32_t address,
                                    uint8_t* data, uint16_t size);
 
 #endif
-
-

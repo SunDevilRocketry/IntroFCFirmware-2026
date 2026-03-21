@@ -14,6 +14,9 @@
 #define CS_HIGH(flash)  HAL_GPIO_WritePin((flash)->cs_port, (flash)->cs_pin, GPIO_PIN_SET)
 
 // ==================== LOW-LEVEL SPI WRAPPERS (PRIVATE) ==================== //
+/**
+ * @brief Sends a single byte over SPI.
+ */
 static SPI_FLASH_STAT spi_transmit_byte(SPI_Flash_Handle* flash, uint8_t data) {
     if (flash == NULL || flash->hspi == NULL) 
         return SPI_FLASH_ERROR;
@@ -23,6 +26,9 @@ static SPI_FLASH_STAT spi_transmit_byte(SPI_Flash_Handle* flash, uint8_t data) {
     return SPI_FLASH_ERROR;
 }
 
+/**
+ * @brief Sends a block of data over SPI. Used for headers and payloads.
+ */
 static SPI_FLASH_STAT spi_transmit_bytes(SPI_Flash_Handle* flash, uint8_t* data, uint16_t size) {
     if (flash == NULL || flash->hspi == NULL || data == NULL) 
         return SPI_FLASH_ERROR;
@@ -32,21 +38,25 @@ static SPI_FLASH_STAT spi_transmit_bytes(SPI_Flash_Handle* flash, uint8_t* data,
     return SPI_FLASH_ERROR;
 }
 
+/**
+ * @brief Receives a single byte from SPI.
+ */
 static SPI_FLASH_STAT spi_receive_byte(SPI_Flash_Handle* flash, uint8_t* data) {
     if (flash == NULL || flash->hspi == NULL || data == NULL) 
         return SPI_FLASH_ERROR;
     
-    uint8_t dummy = 0xFF;
     if (HAL_SPI_Receive(flash->hspi, data, 1, 100) == HAL_OK)
         return SPI_FLASH_OK;
     return SPI_FLASH_ERROR;
 }
 
+/**
+ * @brief Receives a block of data from SPI. Used for memory reads.
+ */
 static SPI_FLASH_STAT spi_receive_bytes(SPI_Flash_Handle* flash, uint8_t* data, uint16_t size) {
     if (flash == NULL || flash->hspi == NULL || data == NULL) 
         return SPI_FLASH_ERROR;
     
-    uint8_t dummy = 0xFF;
     if (HAL_SPI_Receive(flash->hspi, data, size, 1000) == HAL_OK)
         return SPI_FLASH_OK;
     return SPI_FLASH_ERROR;
@@ -73,9 +83,7 @@ void spi_flash_init(SPI_Flash_Handle* flash, SPI_HandleTypeDef* hspi,
     flash->cs_port = cs_port;
     flash->cs_pin = cs_pin;
 
-    // Tride to test? The fuck?
-    HAL_GPIO_WritePin(cs_port, cs_pin, GPIO_PIN_SET); 
-    //CS_HIGH(flash);  // Deselect chip initially (CS active low)
+    CS_HIGH(flash);  // Ensure CS starts HIGH (Deselected)
 }
 
 /**
@@ -126,24 +134,25 @@ SPI_FLASH_STAT read_device_id(SPI_Flash_Handle* flash, uint8_t* manufacturer,
     return SPI_FLASH_OK;
 }
 
-// ==================== WRITING DATA BLOCKS ==================== //   
-// NOT TESTED NOR COMPLETED NOR EVEN VERIFIED. SIMPLY JUST SKIMMED THROUGH DATA SHEET NGL
-// SIMPLY PROTOCAL COPYING 
-
-
-
-// 1. Wait for the flash to finish any internal write/erase operations?
+// ==================== WRITING DATA BLOCKS ==================== //
+/**
+ * @brief Polls Status Register 1 until the BUSY bit (S0) is cleared.
+ * @details The Winbond chip sets S0=1 during internal Erase/Program cycles.
+ *          Maximum timeout is critical for Erase operations (~400ms).
+ */
 SPI_FLASH_STAT spi_flash_wait_busy(SPI_Flash_Handle* flash, uint32_t timeout_ms) {
-    uint8_t status = 0;
+    uint8_t status;
     uint32_t start_tick = HAL_GetTick();
     
     while ((HAL_GetTick() - start_tick) < timeout_ms) {
+        status = 0xFF; // Default to BUSY if SPI receive fails
+        
         CS_LOW(flash);
         spi_transmit_byte(flash, CMD_READ_STATUS1);
         spi_receive_byte(flash, &status);
         CS_HIGH(flash);
         
-        if ((status & 0x01) == 0) { // BUSY bit is 0 :3
+        if ((status & 0x01) == 0) { // BUSY bit is 0, device is ready
             return SPI_FLASH_OK;
         }
         HAL_Delay(1);
@@ -151,7 +160,11 @@ SPI_FLASH_STAT spi_flash_wait_busy(SPI_Flash_Handle* flash, uint32_t timeout_ms)
     return SPI_FLASH_TIMEOUT;
 }
 
-// 2. Enable Writing (Must be called before Erase or Page Program)
+/**
+ * @brief Sets the Write Enable Latch (WEL) bit.
+ * @details This command must be sent before every Write or Erase operation.
+ *          The WEL bit is automatically reset after the write finishes.
+ */
 SPI_FLASH_STAT spi_flash_write_enable(SPI_Flash_Handle* flash) {
     CS_LOW(flash);
     spi_transmit_byte(flash, CMD_WRITE_ENABLE);
@@ -159,47 +172,83 @@ SPI_FLASH_STAT spi_flash_write_enable(SPI_Flash_Handle* flash) {
     return SPI_FLASH_OK;
 }
 
-// 3. Erase a 4KB Sector (Flash bits must be set to 1 before they can be written to 0)
+/**
+ * @brief Erases a 4KB Sector starting at 'address'.
+ * @details Flash memory bits can only be programmed from 1 to 0. To write 
+ *          new data, the sector must first be erased back to 0xFF.
+ *          Packing cmd+addr into a 4-byte buffer ensures a gapless SPI stream.
+ */
 SPI_FLASH_STAT spi_flash_erase_sector(SPI_Flash_Handle* flash, uint32_t address) {
     spi_flash_write_enable(flash);
     
+    // Pack command and address into a single SPI transaction determined by datasheet
+    uint8_t cmd[4];
+    cmd[0] = CMD_SECTOR_ERASE;
+    cmd[1] = (address >> 16) & 0xFF;
+    cmd[2] = (address >> 8) & 0xFF;
+    cmd[3] = address & 0xFF;
+
     CS_LOW(flash);
-    spi_transmit_byte(flash, CMD_SECTOR_ERASE);
-    spi_transmit_byte(flash, (address >> 16) & 0xFF);
-    spi_transmit_byte(flash, (address >> 8) & 0xFF);
-    spi_transmit_byte(flash, address & 0xFF);
+    spi_transmit_bytes(flash, cmd, 4);
     CS_HIGH(flash);
     
-    return spi_flash_wait_busy(flash, 400); // Wait up to 400ms for sector erase
+    /* Datasheet Table 9.6: tSE (Sector Erase) Typ=45ms, Max=400ms. 
+       Use 500ms to allow for HAL/System overhead. */
+    return spi_flash_wait_busy(flash, 500); 
 }
 
-// 4. Write a Page (Max 256 bytes)
+/**
+ * @brief Writes up to 256 bytes to a specific page.
+ * @details Page Program (02h) cannot cross a page boundary (address & 0xFF == 0).
+ *          If address + size > 256, the chip wraps data to the start of the current page.
+ *          This function blocks further input to prevent unintended wrap-around.
+ */
 SPI_FLASH_STAT spi_flash_write_page(SPI_Flash_Handle* flash, uint32_t address, uint8_t* data, uint16_t size) {
-    if (size > 256) return SPI_FLASH_ERROR; // Cannot cross page boundary
+    // Strictly prevent page boundary wrap-around
+    if (size == 0 || size > 256 || ((address & 0xFF) + size > 256)) {
+        return SPI_FLASH_ERROR; 
+    }
     
     spi_flash_write_enable(flash);
     
+    // Pack command and address into a single SPI transaction
+    uint8_t cmd[4];
+    cmd[0] = CMD_PAGE_PROGRAM;
+    cmd[1] = (address >> 16) & 0xFF;
+    cmd[2] = (address >> 8) & 0xFF;
+    cmd[3] = address & 0xFF;
+
     CS_LOW(flash);
-    spi_transmit_byte(flash, CMD_PAGE_PROGRAM);
-    spi_transmit_byte(flash, (address >> 16) & 0xFF);
-    spi_transmit_byte(flash, (address >> 8) & 0xFF);
-    spi_transmit_byte(flash, address & 0xFF);
-    spi_transmit_bytes(flash, data, size);
+    spi_transmit_bytes(flash, cmd, 4);
+    spi_transmit_bytes(flash, data, size); // Stream the payload
     CS_HIGH(flash);
     
-    return spi_flash_wait_busy(flash, 10); // Wait up to 10ms for page program
+    /* Datasheet Table 9.6: tPP (Page Program) Typ=0.4ms, Max=3ms. 
+       We use 10ms for safety. */
+    return spi_flash_wait_busy(flash, 10); 
 }
 
-// 5. Read Data back
+/**
+ * @brief Reads a stream of data starting at 'address'.
+ * @details Unlike Page Program, Read Data (03h) has no page boundaries and 
+ *          will automatically increment the address through the entire chip.
+ */
 SPI_FLASH_STAT spi_flash_read_data(SPI_Flash_Handle* flash, uint32_t address, uint8_t* data, uint16_t size) {
-    spi_flash_wait_busy(flash, 100);
+    // Ensure flash isn't busy before attempting to read
+    if (spi_flash_wait_busy(flash, 100) != SPI_FLASH_OK) {
+        return SPI_FLASH_TIMEOUT;
+    }
     
+    // Pack command and address into a single SPI transaction
+    uint8_t cmd[4];
+    cmd[0] = CMD_READ_DATA;
+    cmd[1] = (address >> 16) & 0xFF;
+    cmd[2] = (address >> 8) & 0xFF;
+    cmd[3] = address & 0xFF;
+
     CS_LOW(flash);
-    spi_transmit_byte(flash, CMD_READ_DATA);
-    spi_transmit_byte(flash, (address >> 16) & 0xFF);
-    spi_transmit_byte(flash, (address >> 8) & 0xFF);
-    spi_transmit_byte(flash, address & 0xFF);
-    spi_receive_bytes(flash, data, size);
+    spi_transmit_bytes(flash, cmd, 4);
+    spi_receive_bytes(flash, data, size); // Stream the read payload
     CS_HIGH(flash);
     
     return SPI_FLASH_OK;
