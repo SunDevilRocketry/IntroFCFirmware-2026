@@ -1,5 +1,5 @@
 #include "spi_flash.h"
-#include <stddef.h>  // For NULL check if needed
+#include <stddef.h>  /* NULL */
 
 // Command set
 #define CMD_WRITE_ENABLE     0x06
@@ -8,6 +8,10 @@
 #define CMD_PAGE_PROGRAM     0x02
 #define CMD_SECTOR_ERASE     0x20 // 4KB Sector Erase
 #define CMD_JEDEC_ID         0x9F
+
+// Timeout constants
+#define SPI_FLASH_TIMEOUT_DEFAULT_MS    10
+#define SPI_FLASH_TIMEOUT_ERASE_MS      500
 
 // CS control macros
 #define CS_LOW(flash)   HAL_GPIO_WritePin((flash)->cs_port, (flash)->cs_pin, GPIO_PIN_RESET)
@@ -63,46 +67,33 @@ static SPI_FLASH_STAT spi_receive_bytes(SPI_Flash_Handle* flash, uint8_t* data, 
 }
 
 // ==================== PUBLIC FUNCTIONS ==================== //
-/**
- * @brief Initialize the SPI flash driver
- * 
- * Must be called before using any other SPI flash functions. Associates a
- * flash device object with its SPI bus and CS pin. The CS pin is set HIGH
- * (deselected) initially since chip select is active low.
- * 
- * @param flash     Pointer to flash handle structure to initialize
- * @param hspi      Pointer to initialized SPI handle (from CubeMX)
- * @param cs_port   GPIO port for CS pin (e.g., GPIOA, GPIOB)
- * @param cs_pin    GPIO pin for CS pin (e.g., GPIO_PIN_4)
- */
-void spi_flash_init(SPI_Flash_Handle* flash, SPI_HandleTypeDef* hspi, 
+
+/* CS starts HIGH (active low), then JEDEC ID is read to verify SPI comms before returning. */
+SPI_FLASH_STAT spi_flash_init(SPI_Flash_Handle* flash, SPI_HandleTypeDef* hspi, 
                     GPIO_TypeDef* cs_port, uint16_t cs_pin) {
-    if (flash == NULL) return;
     
+    if (flash == NULL || hspi == NULL || cs_port == NULL){
+        return SPI_FLASH_ERROR;
+    }
+
     flash->hspi = hspi;
     flash->cs_port = cs_port;
     flash->cs_pin = cs_pin;
 
-    CS_HIGH(flash);  // Ensure CS starts HIGH (Deselected)
+    CS_HIGH(flash);
+
+    /* Verify SPI comms and correct device by reading JEDEC ID */
+    uint8_t mfr, mem_type, cap;
+    if (read_device_id(flash, &mfr, &mem_type, &cap) != SPI_FLASH_OK){
+        return SPI_FLASH_ERROR;
+    }
+    if (mfr != W25Q128JV_MFR_ID || mem_type != W25Q128JV_MEM_TYPE || cap != W25Q128JV_CAPACITY){
+        return SPI_FLASH_ERROR;
+    }   
+    return SPI_FLASH_OK;
 }
 
-/**
- * @brief Read JEDEC ID from flash (command 0x9F)
- * 
- * Reads the 3-byte JEDEC ID which identifies the manufacturer, memory type,
- * and capacity. For W25Q128JV, expected values are:
- * - Manufacturer: 0xEF (Winbond)
- * - Memory Type:  0x40
- * - Capacity:     0x18 (128M-bit / 16M-byte)
- * 
- * The function handles CS control automatically
- * 
- * @param flash         Pointer to initialized flash handle
- * @param manufacturer  Pointer to store manufacturer ID byte
- * @param memory_type   Pointer to store memory type byte
- * @param capacity      Pointer to store capacity byte
- * @return SPI_FLASH_STAT
- */
+/* Sends CMD_JEDEC_ID (0x9F) and clocks out 3 response bytes in a single CS transaction. */
 SPI_FLASH_STAT read_device_id(SPI_Flash_Handle* flash, uint8_t* manufacturer, 
                               uint8_t* memory_type, uint8_t* capacity) {
     // Validate parameters
@@ -127,29 +118,31 @@ SPI_FLASH_STAT read_device_id(SPI_Flash_Handle* flash, uint8_t* manufacturer,
     
     CS_HIGH(flash);
     
-    *manufacturer = rx[0];      // Should be 0xEF (Winbond)
-    *memory_type = rx[1];       // Should be 0x40 (W25Q128JV)
-    *capacity = rx[2];          // Should be 0x18 (128M-bit / 16M-byte)
+    *manufacturer = rx[0];
+    *memory_type = rx[1];
+    *capacity = rx[2];
     
     return SPI_FLASH_OK;
 }
 
 // ==================== WRITING DATA BLOCKS ==================== //
-/**
- * @brief Polls Status Register 1 until the BUSY bit (S0) is cleared.
- * @details The Winbond chip sets S0=1 during internal Erase/Program cycles.
- *          Maximum timeout is critical for Erase operations (~400ms).
- */
+
+/* Polls STATUS1 register, S0 is the BUSY bit per datasheet section 7.1. Returns ERROR on SPI failure, TIMEOUT if limit exceeded. */
 SPI_FLASH_STAT spi_flash_wait_busy(SPI_Flash_Handle* flash, uint32_t timeout_ms) {
     uint8_t status;
     uint32_t start_tick = HAL_GetTick();
     
     while ((HAL_GetTick() - start_tick) < timeout_ms) {
-        status = 0xFF; // Default to BUSY if SPI receive fails
         
         CS_LOW(flash);
-        spi_transmit_byte(flash, CMD_READ_STATUS1);
-        spi_receive_byte(flash, &status);
+        if (spi_transmit_byte(flash, CMD_READ_STATUS1) != SPI_FLASH_OK) {
+            CS_HIGH(flash);
+            return SPI_FLASH_ERROR;
+        }
+        if (spi_receive_byte(flash, &status) != SPI_FLASH_OK) {
+            CS_HIGH(flash);
+            return SPI_FLASH_ERROR;
+        }
         CS_HIGH(flash);
         
         if ((status & 0x01) == 0) { // BUSY bit is 0, device is ready
@@ -160,27 +153,22 @@ SPI_FLASH_STAT spi_flash_wait_busy(SPI_Flash_Handle* flash, uint32_t timeout_ms)
     return SPI_FLASH_TIMEOUT;
 }
 
-/**
- * @brief Sets the Write Enable Latch (WEL) bit.
- * @details This command must be sent before every Write or Erase operation.
- *          The WEL bit is automatically reset after the write finishes.
- */
+/* WEL bit is automatically cleared by hardware after each Write or Erase completes. */
 SPI_FLASH_STAT spi_flash_write_enable(SPI_Flash_Handle* flash) {
     CS_LOW(flash);
-    spi_transmit_byte(flash, CMD_WRITE_ENABLE);
+    if (spi_transmit_byte(flash, CMD_WRITE_ENABLE) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
     CS_HIGH(flash);
     return SPI_FLASH_OK;
 }
 
-/**
- * @brief Erases a 4KB Sector starting at 'address'.
- * @details Flash memory bits can only be programmed from 1 to 0. To write 
- *          new data, the sector must first be erased back to 0xFF.
- *          Packing cmd+addr into a 4-byte buffer ensures a gapless SPI stream.
- */
+/* cmd+addr packed into single 4-byte buffer to ensure good SPI stream per datasheet. */
 SPI_FLASH_STAT spi_flash_erase_sector(SPI_Flash_Handle* flash, uint32_t address) {
-    spi_flash_write_enable(flash);
-    
+    if (spi_flash_write_enable(flash) != SPI_FLASH_OK){
+        return SPI_FLASH_ERROR;
+    }
     // Pack command and address into a single SPI transaction determined by datasheet
     uint8_t cmd[4];
     cmd[0] = CMD_SECTOR_ERASE;
@@ -189,27 +177,26 @@ SPI_FLASH_STAT spi_flash_erase_sector(SPI_Flash_Handle* flash, uint32_t address)
     cmd[3] = address & 0xFF;
 
     CS_LOW(flash);
-    spi_transmit_bytes(flash, cmd, 4);
+    if (spi_transmit_bytes(flash, cmd, 4) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
     CS_HIGH(flash);
     
-    /* Datasheet Table 9.6: tSE (Sector Erase) Typ=45ms, Max=400ms. 
-       Use 500ms to allow for HAL/System overhead. */
-    return spi_flash_wait_busy(flash, 500); 
+    /* Datasheet Table 9.6: tSE (Sector Erase) Typ=45ms, Max=400ms. */
+    return spi_flash_wait_busy(flash, SPI_FLASH_TIMEOUT_ERASE_MS); 
 }
 
-/**
- * @brief Writes up to 256 bytes to a specific page.
- * @details Page Program (02h) cannot cross a page boundary (address & 0xFF == 0).
- *          If address + size > 256, the chip wraps data to the start of the current page.
- *          This function blocks further input to prevent unintended wrap-around.
- */
+/* Hardware silently wraps writes past page boundary + guard check prevents this before any SPI transaction. */
 SPI_FLASH_STAT spi_flash_write_page(SPI_Flash_Handle* flash, uint32_t address, uint8_t* data, uint16_t size) {
     // Strictly prevent page boundary wrap-around
     if (size == 0 || size > 256 || ((address & 0xFF) + size > 256)) {
         return SPI_FLASH_ERROR; 
     }
     
-    spi_flash_write_enable(flash);
+    if (spi_flash_write_enable(flash) != SPI_FLASH_OK){
+        return SPI_FLASH_ERROR;
+    }
     
     // Pack command and address into a single SPI transaction
     uint8_t cmd[4];
@@ -219,24 +206,63 @@ SPI_FLASH_STAT spi_flash_write_page(SPI_Flash_Handle* flash, uint32_t address, u
     cmd[3] = address & 0xFF;
 
     CS_LOW(flash);
-    spi_transmit_bytes(flash, cmd, 4);
-    spi_transmit_bytes(flash, data, size); // Stream the payload
+    if (spi_transmit_bytes(flash, cmd, 4) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
+    if (spi_transmit_bytes(flash, data, size) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
     CS_HIGH(flash);
     
-    /* Datasheet Table 9.6: tPP (Page Program) Typ=0.4ms, Max=3ms. 
-       We use 10ms for safety. */
-    return spi_flash_wait_busy(flash, 10); 
+    /* Datasheet Table 9.6: tPP (Page Program) Typ=0.4ms, Max=3ms. */
+    return spi_flash_wait_busy(flash, SPI_FLASH_TIMEOUT_DEFAULT_MS); 
 }
 
-/**
- * @brief Reads a stream of data starting at 'address'.
- * @details Unlike Page Program, Read Data (03h) has no page boundaries and 
- *          will automatically increment the address through the entire chip.
- */
+/* Chunks data into page-aligned spi_flash_write_page calls. Does NOT erase — uncleared bits cause silent AND corruption. */
+SPI_FLASH_STAT spi_flash_write(SPI_Flash_Handle* flash, uint32_t address,
+                                uint8_t* data, uint32_t size) {
+    if (flash == NULL || data == NULL || size == 0){
+        return SPI_FLASH_ERROR;
+    }
+
+    if ((address + size) > W25Q128JV_FLASH_SIZE){
+        return SPI_FLASH_ERROR;
+    }
+    uint32_t bytes_written = 0;
+
+    while (bytes_written < size) {
+        /* How many bytes remain in the current page from this address */
+        uint16_t page_offset = address & 0xFF;
+        uint16_t space_in_page = 256 - page_offset;
+
+        /* Write whichever is smaller: remaining data or space left in page */
+        uint16_t chunk = (size - bytes_written) < space_in_page
+                         ? (uint16_t)(size - bytes_written)
+                         : space_in_page;
+
+        SPI_FLASH_STAT ret = spi_flash_write_page(flash, address, data + bytes_written, chunk);
+        if (ret != SPI_FLASH_OK){
+            return ret;
+        }
+
+        address      += chunk;
+        bytes_written += chunk;
+    }
+
+    return SPI_FLASH_OK;
+}
+
+/* CMD_READ_DATA auto-increments address across page & sector boundaries through the full chip. */
 SPI_FLASH_STAT spi_flash_read_data(SPI_Flash_Handle* flash, uint32_t address, uint8_t* data, uint16_t size) {
     // Ensure flash isn't busy before attempting to read
     if (spi_flash_wait_busy(flash, 100) != SPI_FLASH_OK) {
         return SPI_FLASH_TIMEOUT;
+    }
+
+    if (size == 0 || (address + size) > W25Q128JV_FLASH_SIZE) {
+        return SPI_FLASH_ERROR;
     }
     
     // Pack command and address into a single SPI transaction
@@ -247,8 +273,14 @@ SPI_FLASH_STAT spi_flash_read_data(SPI_Flash_Handle* flash, uint32_t address, ui
     cmd[3] = address & 0xFF;
 
     CS_LOW(flash);
-    spi_transmit_bytes(flash, cmd, 4);
-    spi_receive_bytes(flash, data, size); // Stream the read payload
+    if (spi_transmit_bytes(flash, cmd, 4) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
+    if (spi_receive_bytes(flash, data, size) != SPI_FLASH_OK) {
+        CS_HIGH(flash);
+        return SPI_FLASH_ERROR;
+    }
     CS_HIGH(flash);
     
     return SPI_FLASH_OK;
